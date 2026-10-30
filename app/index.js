@@ -3,11 +3,21 @@ import { getCurrentPositionAsync, requestForegroundPermissionsAsync } from 'expo
 import { Cloud, CloudRain, CloudSnow, SunDim } from "phosphor-react-native";
 import { useEffect, useState } from 'react';
 import { Alert, ImageBackground, Modal, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import LocationSearch from "../components/LocationSearch";
 import { MapView, Marker } from "../components/MapPicker";
 import Cards from "../components/maincards";
 import Forecast from "../components/mainforecast";
 
 const api_key="9838c6a015b9b5e48004593bc548de3f";
+
+function getWeatherErrorMessage(error) {
+    if (error?.status === 401) return "Weather service is not configured correctly. Please try again later."
+    if (error?.status === 429) return "Too many requests. Please wait a moment and try again."
+    if (error?.message && /network request failed/i.test(error.message)) {
+        return "Network error. Check your internet connection and try again."
+    }
+    return error?.message || "Unable to fetch weather data. Please try again."
+}
 
 export default function HomePage() {
     const isWeb = Platform.OS === "web";
@@ -50,31 +60,62 @@ export default function HomePage() {
         }
     }, [currentlocationdata])
 
-    function fetchWeatherByCoords(latitude, longitude) {
+    function fetchWeatherByCoords(latitude, longitude, options) {
         const weatherurl = `https://api.openweathermap.org/data/2.5/weather?lat=${latitude}&lon=${longitude}&appid=${api_key}&units=metric`
         const forecasturl = `https://api.openweathermap.org/data/2.5/forecast?lat=${latitude}&lon=${longitude}&appid=${api_key}&units=metric`
 
-        fetch(weatherurl)
+        const weatherRequest = fetch(weatherurl)
             .then(function (response) {
+                if (!response.ok) {
+                    const error = new Error("Weather request failed with status " + response.status)
+                    error.status = response.status
+                    throw error
+                }
                 return response.json()
             })
             .then(function (data) {
                 setcurrentlocationdata(data)
             })
-            .catch(function (error) {
-                Alert.alert("Weather fetch failed", error.message)
-            })
 
-        fetch(forecasturl)
+        const forecastRequest = fetch(forecasturl)
             .then(function (response) {
+                if (!response.ok) {
+                    const error = new Error("Forecast request failed with status " + response.status)
+                    error.status = response.status
+                    throw error
+                }
                 return response.json()
             })
             .then(function (data) {
                 setforecastdata(data)
             })
-            .catch(function (error) {
-                Alert.alert("Forecast fetch failed", error.message)
+
+        return Promise.all([weatherRequest, forecastRequest])
+            .then(function () {
+                return true
             })
+            .catch(function (error) {
+                if (options?.onError) {
+                    options.onError(error)
+                } else {
+                    Alert.alert("Weather fetch failed", getWeatherErrorMessage(error))
+                }
+                return false
+            })
+    }
+
+    function handleSearchLocation(location) {
+        if (location?.lat == null || location?.lon == null) {
+            Alert.alert("Location not found", "Please choose a valid location from the search results.")
+            return Promise.resolve(false)
+        }
+
+        return fetchWeatherByCoords(location.lat, location.lon).then(function (success) {
+            if (success) {
+                setSelectedDate(null)
+            }
+            return success
+        })
     }
 
 
@@ -165,6 +206,18 @@ export default function HomePage() {
     return (
         <ScrollView>
             <ImageBackground source={{ uri: "https://images.pexels.com/photos/13025342/pexels-photo-13025342.jpeg" }}>
+                {/* App Title Header */}
+                <View style={styles.titleHeader}>
+                    <BlurView intensity={60} tint="dark" style={styles.titleBlur}>
+                        <View style={styles.titleRow}>
+                            <Cloud size={28} color="#4fc3f7" weight="fill" />
+                            <Text style={styles.titleText}>Weather App</Text>
+                        </View>
+                    </BlurView>
+                </View>
+
+                <LocationSearch apiKey={api_key} onSelectLocation={handleSearchLocation} />
+
                 <View style={styles.currentweather}>
                     <Text style={[styles.currentWeatherText, { fontSize: 50 }]}>{currentlocationdata?.name}</Text>
                     <Text style={styles.currentWeatherText}>{currentlocationdata?.main?.temp}°C</Text>
@@ -316,6 +369,28 @@ export default function HomePage() {
     )
 }
 const styles = StyleSheet.create({
+    titleHeader: {
+        paddingTop: 10,
+        paddingHorizontal: 20,
+        alignItems: "center",
+    },
+    titleBlur: {
+        borderRadius: 20,
+        overflow: "hidden",
+        paddingHorizontal: 24,
+        paddingVertical: 8,
+    },
+    titleRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+    titleText: {
+        fontSize: 22,
+        fontWeight: "bold",
+        color: "#ffffff",
+        letterSpacing: 1.2,
+    },
     currentweather: {
         alignItems: "center",
         alignSelf: "center",
